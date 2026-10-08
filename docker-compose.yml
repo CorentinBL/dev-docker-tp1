@@ -1,35 +1,112 @@
+x-hardening: &hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 200
+
+x-db-env: &db-env
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
+  DB_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+
 services:
   api-python:
-    build: .
+    <<: *hardening
+    build:
+      context: .
+      target: runtime
+    image: ${API_IMAGE:-dev-docker-tp1-api:local}
+    user: "65532:65532"
     ports:
-      - "5000:5000"
+      - "127.0.0.1:${API_PORT:-5000}:5000"
     environment:
-      - ENV=test
-      - DB_USER=testuser
-      - DB_PASSWORD=testpass
-      - DB_NAME=testdb
-      - DB_HOST=db
-      - DB_PORT=5432
+      <<: *db-env
+      ENV: production
+    networks:
+      - frontend
+      - backend
     depends_on:
       db:
         condition: service_healthy
-  
-  db:
-    image: postgres:14-alpine
-    environment:
-      POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: testpass
-      POSTGRES_DB: testdb
-    ports:
-      - "5432:5432"
-    volumes:
-      - db-data-test:/var/lib/postgresql/data
+    # No shell in the image: exec form + the Python stdlib already shipped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).status == 200 else 1)"
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    restart: unless-stopped
+
+  db:
+    <<: *hardening
+    # Chainguard Postgres 18, pinned by immutable digest
+    image: cgr.dev/chainguard/postgres@sha256:0c4eaf6cb9bd65337d834f5ebfe79add4312ee2125ab584bf1fbc071abc6bb8f
+    user: "70:70"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
+      PGDATA: /var/lib/postgresql/data
+    # No published port: only reachable from the internal backend network
+    networks:
+      - backend
+    volumes:
+      - db-data:/var/lib/postgresql
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    # pg_isready ships with the image; -h forces TCP so the init-time
+    # socket-only server is not reported healthy too early
+    healthcheck:
+      test:
+        - "CMD"
+        - "pg_isready"
+        - "-h"
+        - "127.0.0.1"
+        - "-U"
+        - "${POSTGRES_USER}"
+        - "-d"
+        - "${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
       start_period: 30s
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # Integration tests (pytest), run on demand: docker compose --profile test run --rm tests
+  tests:
+    <<: *hardening
+    build:
+      context: .
+      target: test
+    image: dev-docker-tp1-tests:local
+    profiles:
+      - test
+    user: "65532:65532"
+    tmpfs:
+      - /tmp
+    environment:
+      <<: *db-env
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  frontend: {}
+  backend:
+    internal: true
 
 volumes:
-  db-data-test:
+  db-data:

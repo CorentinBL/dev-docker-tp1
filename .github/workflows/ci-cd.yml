@@ -1,0 +1,208 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+# Locked down by default: every job opts in to the strict minimum
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: dev-docker-tp1-api
+  CI_IMAGE: dev-docker-tp1-api:ci
+  # Tools run as containers, pinned by digest
+  DIVE_IMAGE: wagoodman/dive@sha256:f1886e6c32c094fc41a623c1989f5cb3e48aa766da5f0be233f911fc1d85ce10
+
+jobs:
+  # 1. Application quality: flake8 with the project config (+ unit tests)
+  quality:
+    name: Flake8
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install dev dependencies
+        run: pip install --no-cache-dir -r requirements-dev.txt
+      - name: Flake8 (reads .flake8)
+        run: flake8 --config .flake8 .
+      - name: Unit tests
+        run: python -m pytest -v -m "not integration"
+
+  # 2. Static container analysis: hadolint with the team governance file
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+  # 3. BuildKit build + layer metrology (Dive >= 80 %)
+  build:
+    name: Build & Dive
+    needs: [quality, hadolint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build runtime image (BuildKit)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          load: true
+          push: false
+          tags: ${{ env.CI_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Dive (CI mode, lowest efficiency 80 %)
+        run: |
+          docker run --rm -e CI=true \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$DIVE_IMAGE" "$CI_IMAGE" --ci --lowestEfficiency=0.8
+      - name: Export image for the next jobs
+        run: docker save "$CI_IMAGE" -o image.tar
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-image
+          path: image.tar
+          retention-days: 1
+
+  # 4. Supply chain: Trivy on the built image and on the Python dependencies
+  security:
+    name: Trivy
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-image
+      - name: Load image
+        run: docker load -i image.tar
+      - name: Trivy image scan (HIGH/CRITICAL fixed = blocking)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.CI_IMAGE }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Trivy dependency + secret scan (requirements*.txt)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # 5. Dynamic integration: compose up, wait healthy, smoke tests, pytest, teardown
+  integration:
+    name: Integration & smoke tests
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      API_IMAGE: dev-docker-tp1-api:ci
+      API_PORT: "5000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-image
+      - name: Load image
+        run: docker load -i image.tar
+      - name: Create .env (CI throwaway credentials)
+        run: sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-$(openssl rand -hex 16)/" .env.example > .env
+      - name: Start stack and wait until both services are healthy
+        run: docker compose up -d --no-build --wait --wait-timeout 120
+      - name: Smoke test /health
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 2 "http://127.0.0.1:${API_PORT}/health"
+      - name: Smoke test /dbtest
+        run: |
+          body=$(curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/dbtest")
+          echo "$body"
+          echo "$body" | grep -q '"db_connection":"successful"'
+      - name: Pytest (unit + integration, inside the backend network)
+        run: docker compose --profile test run --rm --build tests
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Teardown
+        if: always()
+        run: docker compose --profile test down -v --remove-orphans
+
+  # 6. Secure release: only on a SemVer tag, only if every gate passed
+  release:
+    name: Publish to GHCR
+    needs: [quality, hadolint, build, security, integration]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-image
+      - name: Load the exact image that passed every gate
+        run: docker load -i image.tar
+      - name: SemVer tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=sha,format=long
+      - name: Login to GHCR with the workflow token
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag and push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            docker tag "$CI_IMAGE" "$tag"
+            docker push "$tag"
+          done <<< "$TAGS"

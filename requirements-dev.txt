@@ -1,0 +1,12 @@
+# Test and lint tooling: never installed in the runtime image
+-r requirements.txt
+pytest==9.1.1
+flake8==7.4.1
+# Transitive dependencies, pinned for reproducible builds
+iniconfig==2.3.1
+mccabe==0.7.0
+packaging==26.3
+pluggy==1.6.0
+pycodestyle==2.15.0
+pyflakes==4.0.3
+Pygments==2.21.0

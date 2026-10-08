@@ -1,0 +1,29 @@
+# Team governance for every Dockerfile of the project
+failure-threshold: warning
+no-fail: false
+
+# Only images from these registries may be used in FROM
+trustedRegistries:
+  - docker.io
+  - gcr.io
+  - cgr.dev
+  - ghcr.io
+
+override:
+  error:
+    # Security rules raised to error
+    - DL3002 # Last USER must not be root
+    - DL3006 # Always tag the image version explicitly
+    - DL3007 # Using :latest without a pin is forbidden
+    - DL4006 # Set SHELL -o pipefail before any RUN with a pipe
+    # Standard rules enforced without any exemption
+    - DL3025 # JSON exec form for CMD / ENTRYPOINT
+    - DL3042 # pip install --no-cache-dir
+    - DL3020 # COPY instead of ADD
+    - DL3022 # COPY --from must reference a previously defined stage alias
+    - DL3003 # WORKDIR instead of cd
+    - SC2086 # Double-quote variables
+    - SC2164 # cd ... || exit
+
+# No rule is ignored
+ignored: []
