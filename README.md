@@ -1,6 +1,6 @@
 # DevSecOps TP1 - Hardening Flask / PostgreSQL
 
-Binôme : Jeremy Prat - `<Nom Prénom binôme>`
+Binôme : Blairon Corentin - Jeremy Prat
 
 Dépôt : https://github.com/CorentinBL/dev-docker-tp1
 
