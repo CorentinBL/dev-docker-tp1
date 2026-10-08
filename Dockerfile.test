@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+# Test image (pytest) for CI integration tests only, never published.
+# Separate Dockerfile so the runtime build context never contains test files.
+
+# cgr.dev/chainguard/python:latest-dev, Python 3.14.8, pinned by immutable digest
+FROM cgr.dev/chainguard/python@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN python -m venv --without-pip /app/venv
+ENV PATH="/app/venv/bin:${PATH}"
+
+COPY requirements.txt requirements-dev.txt ./
+RUN /usr/bin/pip --python /app/venv/bin/python install --no-cache-dir -r requirements-dev.txt
+
+COPY pytest.ini app.py test_app.py ./
+
+USER 65532:65532
+ENTRYPOINT ["python", "-m", "pytest"]
+CMD ["-v"]

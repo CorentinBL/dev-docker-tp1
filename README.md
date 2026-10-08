@@ -15,7 +15,7 @@ Microservice Flask + PostgreSQL repris d'une stack "artisanale" puis durci : ima
 
 ## 1. Packages GHCR
 
-- Package : https://github.com/users/CorentinBL/packages/container/package/dev-docker-tp1-api
+- Package : https://github.com/CorentinBL/dev-docker-tp1/pkgs/container/dev-docker-tp1-api
 - Image : `ghcr.io/corentinbl/dev-docker-tp1-api`
 
 ```bash
@@ -37,6 +37,8 @@ Lancer la stack complète en local :
 ```bash
 cp .env.example .env
 ```
+
+Remplacer ensuite la valeur de `POSTGRES_PASSWORD` dans `.env`. Sur macOS, mettre aussi `API_PORT=5050`, car le port 5000 est pris par AirPlay.
 
 ```bash
 docker compose up -d --build --wait
@@ -61,7 +63,8 @@ docker compose --profile test run --rm --build tests
 | CVE HIGH / CRITICAL | 47 HIGH / 0 CRITICAL | **0 / 0** |
 | CVE Python corrigeables | 20 (dont 3 HIGH) | 0 |
 | Efficience Dive | 97,8 % | **99,7 %** |
-| Hadolint (gouvernance `.hadolint.yaml`) | non configuré | 0 violation |
+| Hadolint (gouvernance `.hadolint.yaml`) | non configuré | 0 violation (`Dockerfile` et `Dockerfile.test`) |
+| Contexte de build | tout le dossier (`.git`, tests, `.idea`…) | `app.py` + `requirements.txt` uniquement |
 
 ### Base de données
 
@@ -81,14 +84,15 @@ docker compose --profile test run --rm --build tests
   - une variante `-dev` existe avec exactement la même version de Python (3.14.8). Elle sert d'étage de build : le venv compilé est copié tel quel dans l'image finale sans incompatibilité d'ABI. Distroless Python impose au contraire de trouver un builder Debian avec la même version de Python.
 - **Chainguard Postgres** : imposé par le sujet, 0 CVE contre 47 pour l'image officielle alpine.
 - **Immuabilité et reproductibilité** :
-  - chaque `FROM` et l'image Postgres sont épinglés par **digest SHA256**. Le tag `latest`/`latest-dev` présent dans le `FROM` est purement informatif, seul le digest compte ;
+  - chaque `FROM` et l'image Postgres sont référencés **uniquement par digest SHA256** (`image@sha256:…`), sans aucun tag mouvant. Le tag d'origine (`latest`, `latest-dev`) et la version de Python figurent en commentaire au-dessus de chaque `FROM` pour la traçabilité ;
   - toutes les dépendances Python, y compris transitives, sont figées dans `requirements.txt` ;
   - toutes les actions GitHub sont épinglées par SHA de commit ;
   - les outils lancés en conteneur (Dive) sont épinglés par digest.
-- **Multi-stage** (`builder` → `test` → `runtime`) :
+- **Multi-stage** (`builder` → `runtime`) :
   - le manifeste est copié avant le code, donc une modification de `app.py` ne relance pas `pip install` ;
-  - le venv est créé `--without-pip` et rempli par le pip du builder (`pip --python`), si bien que l'image finale ne contient ni pip, ni cache, ni en-têtes de compilation ;
-  - l'étage `test` (pytest) n'est jamais publié.
+  - le venv est créé `--without-pip` et rempli par le pip du builder (`pip --python`), si bien que l'image finale ne contient ni pip, ni cache, ni en-têtes de compilation.
+- **Image de test séparée** (`Dockerfile.test`, jamais publiée) : pytest tourne dans le réseau `backend` pour les tests d'intégration. Elle a son propre fichier d'exclusion `Dockerfile.test.dockerignore`, que BuildKit utilise à la place de `.dockerignore`. Le contexte de l'image runtime ne contient ainsi **aucun fichier de test**.
+- **`.dockerignore` en liste blanche** : tout est exclu (`*`), puis seuls `app.py` et `requirements.txt` sont réintégrés. Les fichiers d'environnement (`.env*`), les caches Python (`__pycache__`, `*.pyc`, `.pytest_cache`), les tests, `.git`/`.github`, les logs, les archives et les dossiers d'IDE sont donc exclus par construction. Un oubli dans une liste noire ne peut pas faire fuir un fichier.
 
 Pour mettre à jour une base : récupérer le nouveau digest (`docker pull` puis `docker inspect --format '{{index .RepoDigests 0}}'`), le reporter dans le `Dockerfile` ou le compose, et laisser la CI revalider.
 
@@ -143,8 +147,8 @@ Workflow : `.github/workflows/ci-cd.yml`, déclenché sur `push` et `pull_reques
 | Job | Porte bloquante |
 |---|---|
 | `quality` | `flake8 --config .flake8` puis tests unitaires |
-| `hadolint` | Hadolint avec `.hadolint.yaml` (seuil `warning`) |
-| `build` | build BuildKit (cache GHA) puis Dive `--ci --lowestEfficiency=0.8` |
+| `hadolint` | Hadolint avec `.hadolint.yaml` (seuil `warning`) sur `Dockerfile` et `Dockerfile.test` |
+| `build` | build BuildKit (cache GHA), garde-fous runtime (utilisateur non-root, absence de shell et de pip) puis Dive `--ci --lowestEfficiency=0.8` |
 | `security` | Trivy image et Trivy fs (dépendances + secrets), `HIGH,CRITICAL`, `ignore-unfixed`, `exit-code: 1` |
 | `integration` | `compose up --wait`, curl `/health` et `/dbtest`, pytest dans le réseau backend, teardown `down -v` |
 | `release` | uniquement sur un tag SemVer et si **toutes** les portes ont réussi : push sur GHCR |
@@ -154,6 +158,7 @@ Workflow : `.github/workflows/ci-cd.yml`, déclenché sur `push` et `pull_reques
   - seul `release` obtient `packages: write` ;
   - l'authentification GHCR utilise le `GITHUB_TOKEN` natif, sans aucun PAT ;
   - `persist-credentials: false` est mis sur chaque checkout.
+- **Limite de Hadolint et garde-fou** : la règle DL3002 ne se déclenche que sur un `USER root` explicite. Un Dockerfile sans aucune instruction `USER`, qui tourne donc en root, passe Hadolint : c'était le cas du Dockerfile d'origine, que nous avons testé avec notre `.hadolint.yaml`. Le job `build` inspecte donc l'image produite et échoue si l'utilisateur est vide, `0` ou `root`, si `/bin/sh` existe ou si `pip` est importable.
 - **Pinning** : toutes les actions tierces sont référencées par SHA de commit complet, avec la version en commentaire. Un tag déplacé ou compromis ne peut donc pas injecter de code. L'image Dive est épinglée par digest.
 - **Ce qui est publié est ce qui a été testé** : l'image est construite une seule fois, puis passée d'un job à l'autre en artefact. `release` la recharge et la pousse sans la reconstruire.
 - **SemVer** : `docker/metadata-action` produit `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`, et `latest` qui suit la dernière release stable. Le tag majeur est désactivé pour les versions `0.x`, qui sont instables par définition. Pour publier une release :

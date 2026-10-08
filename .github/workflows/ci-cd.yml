@@ -51,9 +51,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+      - name: Hadolint Dockerfile (runtime)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+      - name: Hadolint Dockerfile.test
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile.test
           config: .hadolint.yaml
           failure-threshold: warning
 
@@ -73,12 +80,28 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: runtime
+          file: Dockerfile
           load: true
           push: false
           tags: ${{ env.CI_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # DL3002 only fires on an explicit "USER root": an image without any USER
+      # would slip through hadolint, so the built image itself is checked.
+      - name: Runtime guardrails (non-root, no shell, no pip)
+        run: |
+          user=$(docker inspect --format '{{.Config.User}}' "$CI_IMAGE")
+          echo "Image user: '${user}'"
+          case "$user" in
+            ""|0|0:*|root|root:*) echo "::error::the image runs as root"; exit 1 ;;
+          esac
+          if docker run --rm --entrypoint /bin/sh "$CI_IMAGE" -c true 2>/dev/null; then
+            echo "::error::a shell is present in the runtime image"; exit 1
+          fi
+          docker run --rm --entrypoint python "$CI_IMAGE" -c \
+            "import importlib.util, sys; sys.exit(importlib.util.find_spec('pip') is not None)" \
+            || { echo "::error::pip is present in the runtime image"; exit 1; }
+          echo "OK: non-root, no shell, no pip"
       - name: Dive (CI mode, lowest efficiency 80 %)
         run: |
           docker run --rm -e CI=true \

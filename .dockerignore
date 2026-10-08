@@ -1,13 +1,12 @@
-# Whitelist: everything is excluded, then only what the build needs is re-included.
-# Excluded by construction: .git, .github, .env*, __pycache__, *.pyc, .pytest_cache,
-# venv/, *.log, archives (*.tar*, *.zip), docs, CI files, compose files, IDE folders.
+# Runtime build context (Dockerfile). Whitelist: everything is excluded,
+# then only what the runtime image needs is re-included.
+# Excluded by construction: tests (test_*.py, pytest.ini, requirements-dev.txt),
+# .git, .github, .env*, __pycache__, *.pyc, .pytest_cache, venv/, *.log,
+# archives (*.tar*, *.zip), docs, CI and compose files, IDE folders (.idea, .vscode).
 *
 
 !app.py
-!test_app.py
-!pytest.ini
 !requirements.txt
-!requirements-dev.txt
 
 # Safety net in case a re-included path ever matches these
 **/__pycache__

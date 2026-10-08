@@ -1,0 +1,12 @@
+# Build context of the test image (Dockerfile.test), used by BuildKit instead of .dockerignore.
+# Same whitelist as the runtime context + the test files.
+*
+
+!app.py
+!test_app.py
+!pytest.ini
+!requirements.txt
+!requirements-dev.txt
+
+**/__pycache__
+**/*.py[cod]

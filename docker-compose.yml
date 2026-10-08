@@ -18,7 +18,7 @@ services:
     <<: *hardening
     build:
       context: .
-      target: runtime
+      dockerfile: Dockerfile
     image: ${API_IMAGE:-dev-docker-tp1-api:local}
     user: "65532:65532"
     ports:
@@ -88,7 +88,7 @@ services:
     <<: *hardening
     build:
       context: .
-      target: test
+      dockerfile: Dockerfile.test
     image: dev-docker-tp1-tests:local
     profiles:
       - test
