@@ -30,7 +30,7 @@ docker run --rm -p 127.0.0.1:5000:5000 ghcr.io/corentinbl/dev-docker-tp1-api:1.0
 curl http://127.0.0.1:5000/health
 ```
 
-Tags publiés pour une release `v1.0.0` : `1.0.0`, `1.0`, `1`, `sha-<commit>`.
+Tags publiés pour une release `v1.0.0` : `1.0.0`, `1.0`, `1`, `latest`, `sha-<commit>`.
 
 Lancer la stack complète en local :
 
@@ -156,7 +156,7 @@ Workflow : `.github/workflows/ci-cd.yml`, déclenché sur `push` et `pull_reques
   - `persist-credentials: false` est mis sur chaque checkout.
 - **Pinning** : toutes les actions tierces sont référencées par SHA de commit complet, avec la version en commentaire. Un tag déplacé ou compromis ne peut donc pas injecter de code. L'image Dive est épinglée par digest.
 - **Ce qui est publié est ce qui a été testé** : l'image est construite une seule fois, puis passée d'un job à l'autre en artefact. `release` la recharge et la pousse sans la reconstruire.
-- **SemVer** : `docker/metadata-action` produit `X.Y.Z`, `X.Y`, `X` et `sha-<commit>`. Le tag majeur est désactivé pour les versions `0.x`, qui sont instables par définition. Pour publier une release :
+- **SemVer** : `docker/metadata-action` produit `X.Y.Z`, `X.Y`, `X`, `sha-<commit>`, et `latest` qui suit la dernière release stable. Le tag majeur est désactivé pour les versions `0.x`, qui sont instables par définition. Pour publier une release :
 
 ```bash
 git tag -a v1.0.0 -m "v1.0.0"
@@ -168,25 +168,55 @@ git push origin v1.0.0
 
 ## 7. Preuves d'exécution
 
-Sorties obtenues en local, avec les mêmes commandes et versions que la CI (à compléter avec les liens des runs GitHub Actions) :
+Toutes les portes passent sur GitHub Actions :
+
+- CI sur `main` : https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37757851341
+- Release `v1.0.0`, toutes les portes puis la publication GHCR : https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565
+
+| Porte | Job (release `v1.0.0`) | Résultat |
+|---|---|---|
+| Flake8 | [Flake8](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113247876805) | 0 erreur avec `.flake8`, tests unitaires 2 passed |
+| Hadolint | [Hadolint](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113247876561) | 0 violation (seuil `warning`) |
+| Dive | [Build & Dive](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113247975550) | efficiency 99,73 %, `Result: PASS` |
+| Trivy | [Trivy](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113248217902) | image : 0 vulnérabilité (wolfi + 9 paquets Python) ; `requirements.txt` : 0 vulnérabilité, 0 secret |
+| Compose | [Integration & smoke tests](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113248218373) | `db` et `api-python` Healthy, `/health` et `/dbtest` OK, pytest 3 passed |
+| GHCR | [Publish to GHCR](https://github.com/CorentinBL/dev-docker-tp1/actions/runs/37758192565/job/113248564582) | tags `1.0.0`, `1.0`, `1`, `latest`, `sha-922d0e2…` publiés |
+
+Extraits des logs CI :
 
 ```
-$ flake8 --config .flake8 .            -> 0 erreur (et 0 avec --isolated)
-$ hadolint --config .hadolint.yaml Dockerfile -> 0 violation (exit 0)
-$ dive dev-docker-tp1-api --ci --lowestEfficiency=0.8
-  efficiency: 99.7449 %   wastedBytes: 238 kB   userWastedPercent: 0.44 %
-  Result: PASS
-$ trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 dev-docker-tp1-api
-  dev-docker-tp1-api (wolfi)  0 vulnérabilité ; Python  0 vulnérabilité ; exit 0
-$ docker compose up -d --wait
-  db          Up (healthy)
-  api-python  Up (healthy)   127.0.0.1:5000->5000/tcp
-$ curl /health  -> {"status":"ok"}
-$ curl /dbtest  -> {"db_connection":"successful"}
-$ docker compose --profile test run --rm tests
-  test_health PASSED / test_hello PASSED / test_dbtest PASSED  -> 3 passed
+# Build & Dive
+  efficiency: 99.7266 %
+  Result:PASS [Total:3] [Passed:2] [Failed:0] [Warn:0] [Skipped:1]
+
+# Trivy (image)
+│ dev-docker-tp1-api:ci (wolfi 20230201)                                     │ wolfi      │ 0 │
+│ app/venv/lib/python3.14/site-packages/flask-3.1.3.dist-info/METADATA       │ python-pkg │ 0 │
+│ app/venv/lib/python3.14/site-packages/werkzeug-3.1.9.dist-info/METADATA    │ python-pkg │ 0 │
+│ app/venv/lib/python3.14/site-packages/psycopg2_binary-2.9.13.dist-info/... │ python-pkg │ 0 │
+│ app/venv/lib/python3.14/site-packages/gunicorn-26.2.0.dist-info/METADATA   │ python-pkg │ 0 │
+# Trivy (fs)
+│ requirements.txt │ pip │ 0 │ - │
+
+# Integration & smoke tests
+ Container dev-docker-tp1-db-1  Healthy
+ Container dev-docker-tp1-api-python-1  Healthy
+{"status":"ok"}
+{"db_connection":"successful"}
+============================== 3 passed in 0.08s ===============================
+
+# Publish to GHCR
+1.0.0: digest: sha256:bd85a616e8400794c0ff1fa1eb83862c568af44dfc3332159b53ef2e4efe7c31
+1.0: digest: sha256:bd85a616e8400794c0ff1fa1eb83862c568af44dfc3332159b53ef2e4efe7c31
+1: digest: sha256:bd85a616e8400794c0ff1fa1eb83862c568af44dfc3332159b53ef2e4efe7c31
+latest: digest: sha256:bd85a616e8400794c0ff1fa1eb83862c568af44dfc3332159b53ef2e4efe7c31
+```
+
+Vérifications locales complémentaires :
+
+```
+$ flake8 --isolated --max-line-length 88 .   -> 0 erreur (même sans les exclusions du .flake8)
 $ docker compose top
   api-python  UID 65532 (gunicorn) ; db  UID 70 (postgres)
+$ docker pull ghcr.io/corentinbl/dev-docker-tp1-api:1.0.0   -> OK sans authentification (package public)
 ```
-
-Publication GHCR : lien du run `release` à ajouter après le premier tag.
