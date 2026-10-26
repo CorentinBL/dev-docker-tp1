@@ -77,6 +77,8 @@ jobs:
           load: true
           push: false
           tags: ${{ env.CI_IMAGE }}
+          secrets: |
+            pkg_token=${{ secrets.PKG_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Dive (CI mode, lowest efficiency 80 %)
