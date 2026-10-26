@@ -1,8 +1,5 @@
-# Whitelist: everything is excluded, then only what the build needs is re-included.
-# Excluded by construction: .git, .github, .env*, __pycache__, *.pyc, .pytest_cache,
-# venv/, *.log, archives (*.tar*, *.zip), docs, CI files, compose files, IDE folders.
-*
 
+*
 !app.py
 !test_app.py
 !pytest.ini
