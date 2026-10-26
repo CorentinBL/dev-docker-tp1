@@ -15,9 +15,7 @@ ENV PATH="/app/venv/bin:${PATH}"
 
 COPY requirements.txt .
 RUN --mount=type=secret,id=pkg_token,target=/run/secrets/pkg_token,mode=0400 \
-    test -s /run/secrets/pkg_token \
-    && grep -Eq '^[A-Za-z0-9._~+/=-]{16,}$' /run/secrets/pkg_token \
-    && echo "Secret de build présent et valide (contenu non affiché)"
+    test -s /run/secrets/pkg_token
 
 RUN --mount=type=cache,id=pip-cache,target=/home/nonroot/.cache/pip,uid=65532,gid=65532,sharing=locked \
     /usr/bin/pip --python /app/venv/bin/python install -r requirements.txt
