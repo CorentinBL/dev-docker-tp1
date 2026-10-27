@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:894aed3297d91283e1fc4c542f5374a4b5f3726134fda7c94eaa539342be1e05 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:e51f00c88b6dc695e822b75cb403e40ab9459bd66524ed0f476dfc8366de8794 AS builder
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -33,7 +33,7 @@ USER 65532:65532
 ENTRYPOINT ["python", "-m", "pytest"]
 CMD ["-v"]
 
-FROM cgr.dev/chainguard/python:latest@sha256:b6248c85ba9b97e1e61b30197f309cc4d21661f889fefa5268f0a7bc530dad46 AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:012106301931c182063868dee31dc36a0d278267ec837176ba1774a320fa1bbb AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
