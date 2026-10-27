@@ -89,6 +89,8 @@ services:
     build:
       context: .
       target: test
+      secrets:
+        - pkg_token
     image: dev-docker-tp1-tests:local
     profiles:
       - test
@@ -102,6 +104,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+secrets:
+  pkg_token:
+    file: ./secrets/pkg_token.txt
 
 networks:
   frontend: {}

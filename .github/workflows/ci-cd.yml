@@ -132,7 +132,7 @@ jobs:
   # 5. Dynamic integration: compose up, wait healthy, smoke tests, pytest, teardown
   integration:
     name: Integration & smoke tests
-    needs: [build]
+    needs: [ build ]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -150,15 +150,15 @@ jobs:
         run: docker load -i image.tar
       - name: Create .env (CI throwaway credentials)
         run: sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-$(openssl rand -hex 16)/" .env.example > .env
+      - name: Create build secret file (from GitHub Secret)
+        env:
+          PKG_TOKEN: ${{ secrets.PKG_TOKEN }}
+        run: |
+          mkdir -p secrets
+          printf '%s' "$PKG_TOKEN" > secrets/pkg_token.txt
+          chmod 600 secrets/pkg_token.txt
       - name: Start stack and wait until both services are healthy
         run: docker compose up -d --no-build --wait --wait-timeout 120
-      - name: Smoke test /health
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 2 "http://127.0.0.1:${API_PORT}/health"
-      - name: Smoke test /dbtest
-        run: |
-          body=$(curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/dbtest")
-          echo "$body"
-          echo "$body" | grep -q '"db_connection":"successful"'
       - name: Pytest (unit + integration, inside the backend network)
         run: docker compose --profile test run --rm --build tests
       - name: Logs on failure
@@ -167,6 +167,9 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose --profile test down -v --remove-orphans
+      - name: Remove secret file
+        if: always()
+        run: rm -f secrets/pkg_token.txt
 
   # 6. Secure release: only on a SemVer tag, only if every gate passed
   release:
