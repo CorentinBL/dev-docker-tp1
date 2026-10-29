@@ -190,3 +190,99 @@ $ docker compose top
 ```
 
 Publication GHCR : lien du run `release` à ajouter après le premier tag.
+
+---
+
+# TP2 - Industrialisation BuildKit et supply chain
+
+## 8. Preuves d'industrialisation BuildKit (étape 1)
+
+### Cache persistant et secret de build
+
+- `# syntax=docker/dockerfile:1` en tête du `Dockerfile`.
+- `pip install` utilise un `--mount=type=cache` (`/home/nonroot/.cache/pip`, uid 65532) : le cache vit dans le builder, jamais dans une couche. L'image finale ne copie que le venv.
+- Le jeton `pkg_token` est monté par `--mount=type=secret` (tmpfs, mode 0400) le temps d'un seul `RUN`, jamais par `ARG` ni `ENV`.
+- `secrets/` est exclu de Git (`.gitignore`) et du contexte de build (`.dockerignore` en liste blanche).
+
+Benchmark (build initial à froid vs reconstruction après modification mineure de `requirements.txt`) :
+
+| | Durée | Téléchargements pip |
+|---|---|---|
+| À froid (builder neuf, cache vide) | 22,4 s (dont le pull des images de base) | 18 téléchargements, 0 depuis le cache |
+| Après ajout d'une ligne dans `requirements.txt` | **1,2 s** | **0 téléchargement**, 18 depuis le cache |
+
+La modification invalide bien la couche `pip install`, mais pip ne retélécharge rien : tout est relu depuis le cache mount.
+
+Preuve d'absence de fuite : étape CI « Contrôle d'absence de fuite du secret de build » (recherche de la valeur du jeton dans `docker history --no-trunc`, les métadonnées, chaque couche, et `/run/secrets` absent de l'image) + scan `trivy --scanners secret`.
+
+### Multi-architecture déclaratif
+
+`docker-bake.hcl` : variables `REGISTRY`, `IMAGE`, `VERSION`, `GIT_SHA`, plateformes `linux/amd64` + `linux/arm64`, secret `pkg_token` (variable d'environnement), cache registre `mode=max` en import et export.
+
+```bash
+docker buildx bake -f docker-bake.hcl
+```
+
+Index publié par le job de release (tag `v1.1.0-rc.1`) :
+
+```
+$ docker buildx imagetools inspect ghcr.io/corentinbl/dev-docker-tp1-api@sha256:b1f2e0446f4a914ae1c7555280ee9c9539bd5ff8204e7a728d5618f0bd1e338f
+MediaType: application/vnd.oci.image.index.v1+json
+  Platform:    linux/amd64
+  Platform:    linux/arm64
+  Platform:    unknown/unknown   (attestations de provenance BuildKit)
+```
+
+## 9. Traçabilité SBOM et gouvernance VEX (étape 2)
+
+### SBOM
+
+Générés par Syft par analyse statique de l'image sur le registre, sans l'exécuter : `sbom.cdx.json` (CycloneDX, OWASP) et `sbom.spdx.json` (SPDX, ISO/IEC 5962).
+
+```bash
+syft registry:ghcr.io/corentinbl/dev-docker-tp1-api@sha256:b1f2e0446f4a914ae1c7555280ee9c9539bd5ff8204e7a728d5618f0bd1e338f --platform linux/amd64 -o cyclonedx-json=sbom.cdx.json -o spdx-json=sbom.spdx.json
+```
+
+| Requête | Résultat |
+|---|---|
+| `jq '[.components[] \| select(.type != "file")] \| length' sbom.cdx.json` | **40** composants (Syft liste aussi les fichiers, d'où le filtre) |
+| Répartition par type de PURL | apk : 30, pypi : 9 (+ la distribution wolfi) |
+| `jq -r '.components[] \| select(.purl) \| .purl' sbom.cdx.json` | ex. `pkg:pypi/flask@3.1.3`, `pkg:pypi/werkzeug@3.1.9`, `pkg:apk/wolfi/python-3.15@3.15.1_git20261024-r0` |
+| `jq -r '[.packages[].licenseDeclared \| select(. != "NOASSERTION")] \| unique \| .[]' sbom.spdx.json` | Apache-2.0, BSD-2-Clause, BSD-3-Clause, MIT, MPL-2.0, PSF-2.0, GPL-3.0-or-later, LGPL-2.1-or-later, blessing, ... |
+
+### Grype sur SBOM et VEX
+
+`.grype.yaml` : arrêt bloquant sur les vulnérabilités High+ disposant d'un correctif, document VEX pris en compte.
+
+```
+$ grype sbom:sbom.cdx.json
+python-3.15  3.15.1_git20261024-r0  apk  CVE-2026-114583  Medium  (pas de correctif)
+$ grype sbom:sbom.cdx.json -c .grype.yaml
+No vulnerabilities found   (exit 0)
+```
+
+`security.vex.json` (OpenVEX) : CVE-2026-114583, `not_affected`, justification `vulnerable_code_not_in_execute_path`. La faille permet de contourner `tarfile.tar_filter` lors d'un `tarfile.extractall()` sur une archive malveillante. L'API n'importe pas `tarfile` et n'extrait aucune archive : le code vulnérable n'est jamais exécuté. L'alerte est levée de façon traçable (le fichier est versionné, daté et signé de l'équipe) plutôt qu'ignorée.
+
+## 10. Commandes de vérification publique
+
+Image : `ghcr.io/corentinbl/dev-docker-tp1-api:1.1.0-rc.1`
+Digest : `sha256:b1f2e0446f4a914ae1c7555280ee9c9539bd5ff8204e7a728d5618f0bd1e338f`
+
+```bash
+docker buildx imagetools inspect ghcr.io/corentinbl/dev-docker-tp1-api@sha256:b1f2e0446f4a914ae1c7555280ee9c9539bd5ff8204e7a728d5618f0bd1e338f
+```
+
+## 11. Reste à faire
+
+- Signature Cosign (keyless OIDC) de l'image par son digest, attestation du SBOM et gate de vérification finale (partie F).
+- Jobs SBOM et Grype + VEX intégrés au pipeline CI, avec SBOM publiés en artefacts.
+
+## 12. Réflexion critique
+
+### Jeremy
+
+- La publication multi-arch m'a obligé à un compromis : l'artefact `image.tar` testé par la CI est amd64 uniquement, donc le job de release reconstruit l'image pour les deux architectures au lieu de pousser exactement celle qui a passé les tests. Le même commit et les mêmes digests de base limitent l'écart, mais ce n'est pas la même image au bit près. La signature et le scan de l'image publiée (partie F) devaient combler ce trou.
+- `docker buildx bake` sans `-f` lit aussi `docker-compose.yml`, et le build échouait sur l'interpolation des variables Postgres. Il faut toujours préciser le fichier HCL.
+- Le SBOM a montré qu'une image qui n'a pas bougé depuis le TP1 se retrouvait avec des CVE critiques quelques semaines plus tard : le scan doit être continu, pas seulement au build.
+
+### Corentin
