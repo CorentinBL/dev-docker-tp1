@@ -149,13 +149,18 @@ jobs:
       - name: Load image
         run: docker load -i image.tar
       - name: Create .env (CI throwaway credentials)
-        run: sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-$(openssl rand -hex 16)/" .env.example > .env
+        run: cp .env.example .env
       - name: Create build secret file (from GitHub Secret)
         env:
           PKG_TOKEN: ${{ secrets.PKG_TOKEN }}
         run: |
           mkdir -p secrets
+          # Throwaway DB password, generated per run, never stored
+          printf '%s' "ci-$(openssl rand -hex 16)" > secrets/db_password.txt
+          # Build-time token from the GitHub secret
           printf '%s' "$PKG_TOKEN" > secrets/pkg_token.txt
+          # db_password is read inside containers running as uid 70 / 65532,
+          chmod 644 secrets/db_password.txt
           chmod 600 secrets/pkg_token.txt
       - name: Start stack and wait until both services are healthy
         run: docker compose up -d --no-build --wait --wait-timeout 120
@@ -169,7 +174,7 @@ jobs:
         run: docker compose --profile test down -v --remove-orphans
       - name: Remove secret file
         if: always()
-        run: rm -f secrets/pkg_token.txt
+        run: rm -f secrets/db_password.txt secrets/pkg_token.txtgi
 
   # 6. Secure release: only on a SemVer tag, only if every gate passed
   release:
