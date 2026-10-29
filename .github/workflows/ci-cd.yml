@@ -192,43 +192,59 @@ jobs:
         if: always()
         run: rm -f secrets/pkg_token.txt
 
-  # 6. Secure release: only on a SemVer tag, only if every gate passed
+  # 6. Publication : uniquement sur un tag SemVer, après toutes les portes de qualité.
+  # Build multi-arch déclaratif (docker-bake.hcl) vers ghcr.io, avec cache registre.
   release:
-    name: Publish to GHCR
+    name: Publication multi-arch sur GHCR
     needs: [quality, hadolint, build, security, integration]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    # Digest immuable de l'index publié, réutilisé par la signature Cosign
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: api-image
-      - name: Load the exact image that passed every gate
-        run: docker load -i image.tar
-      - name: SemVer tags
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=sha,format=long
-      - name: Login to GHCR with the workflow token
+          persist-credentials: false
+      - name: Connexion à GHCR avec le jeton du workflow
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Tag and push
+      # Émulation pour construire l'image arm64 sur un runner amd64
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build multi-arch et push (bake)
+        id: bake
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         env:
-          TAGS: ${{ steps.meta.outputs.tags }}
+          PKG_TOKEN: ${{ secrets.PKG_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
+        with:
+          source: .
+          files: docker-bake.hcl
+          push: true
+      - name: Récupération du digest de l'index
+        id: digest
+        env:
+          METADATA: ${{ steps.bake.outputs.metadata }}
         run: |
-          while IFS= read -r tag; do
-            [ -z "$tag" ] && continue
-            docker tag "$CI_IMAGE" "$tag"
-            docker push "$tag"
-          done <<< "$TAGS"
+          digest=$(jq -r '.app["containerimage.digest"]' <<<"$METADATA")
+          echo "Digest publié : ${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+      # Preuve du multi-arch : l'index doit lister linux/amd64 et linux/arm64
+      - name: Inspection du manifeste publié
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          ref="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dev-docker-tp1-api@${DIGEST}"
+          docker buildx imagetools inspect "$ref"
+          for arch in linux/amd64 linux/arm64; do
+            docker buildx imagetools inspect "$ref" | grep -q "Platform: *${arch}$" \
+              || { echo "::error::architecture ${arch} absente de l'index"; exit 1; }
+          done
