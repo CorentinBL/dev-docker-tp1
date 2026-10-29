@@ -11,7 +11,7 @@ x-db-env: &db-env
   DB_PORT: "5432"
   DB_NAME: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
   DB_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
-  DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+  DB_PASSWORD_FILE: /run/secrets/db_password
 
 services:
   api-python:
@@ -19,6 +19,8 @@ services:
     build:
       context: .
       target: runtime
+      secrets:
+        - pkg_token
     image: ${API_IMAGE:-dev-docker-tp1-api:local}
     user: "65532:65532"
     ports:
@@ -26,6 +28,8 @@ services:
     environment:
       <<: *db-env
       ENV: production
+    secrets:
+      - db_password
     networks:
       - frontend
       - backend
@@ -53,9 +57,11 @@ services:
     user: "70:70"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
       PGDATA: /var/lib/postgresql/data
+    secrets:
+      - db_password
     # No published port: only reachable from the internal backend network
     networks:
       - backend
@@ -99,6 +105,8 @@ services:
       - /tmp
     environment:
       <<: *db-env
+    secrets:
+      - db_password
     networks:
       - backend
     depends_on:
@@ -108,6 +116,8 @@ services:
 secrets:
   pkg_token:
     file: ./secrets/pkg_token.txt
+  db_password:
+    file: ./secrets/db_password.txt
 
 networks:
   frontend: {}

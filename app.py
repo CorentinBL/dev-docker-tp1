@@ -7,11 +7,19 @@ from flask import Flask, jsonify
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
 
+def get_db_password():
+    # Mot de passe lu depuis le secret monté (/run/secrets), jamais depuis l'environnement en production
+    password_file = os.getenv("DB_PASSWORD_FILE")
+    if password_file:
+        with open(password_file, encoding="utf-8") as f:
+            return f.read().strip()
+    return os.getenv("DB_PASSWORD", "testpass")
+
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "testdb")
 DB_USER = os.getenv("DB_USER", "testuser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "testpass")
+DB_PASSWORD = get_db_password()
 
 
 @app.route("/health")
@@ -30,7 +38,7 @@ def get_db_connection():
         port=DB_PORT,
         dbname=DB_NAME,
         user=DB_USER,
-        password=DB_PASSWORD,
+        password=get_db_password(),
         connect_timeout=5,
     )
     return conn
