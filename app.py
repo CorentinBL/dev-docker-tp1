@@ -38,7 +38,7 @@ def get_db_connection():
         port=DB_PORT,
         dbname=DB_NAME,
         user=DB_USER,
-        password=get_db_password(),
+        password=DB_PASSWORD
         connect_timeout=5,
     )
     return conn
