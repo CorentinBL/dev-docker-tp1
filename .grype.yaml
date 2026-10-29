@@ -1,0 +1,6 @@
+# Porte bloquante : vulnérabilités High ou Critical disposant d'un correctif
+fail-on-severity: high
+only-fixed: true
+# Déclarations d'inexploitabilité OpenVEX prises en compte par le scan
+vex-documents:
+  - security.vex.json
