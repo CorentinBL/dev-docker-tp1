@@ -8,7 +8,7 @@ app = Flask(__name__)
 logger = logging.getLogger(__name__)
 
 def get_db_password():
-    # Mot de passe lu depuis le secret monté (/run/secrets), jamais depuis l'environnement en production
+    # Mot de passe lu depuis le secret monté (/run/secrets)
     password_file = os.getenv("DB_PASSWORD_FILE")
     if password_file:
         with open(password_file, encoding="utf-8") as f:
