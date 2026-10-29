@@ -1,0 +1,18 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/CorentinBL/dev-docker-tp1/vex/2026-10-29",
+  "author": "Blairon Corentin - Jeremy Prat",
+  "timestamp": "2026-10-29T16:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2026-114583" },
+      "products": [
+        { "@id": "pkg:apk/wolfi/python-3.15@3.15.1_git20261024-r0" }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "La faille concerne tarfile.extractall() avec filter=\"tar\". L'API n'importe jamais le module tarfile et n'extrait aucune archive : le code vulnérable n'est pas dans son chemin d'exécution."
+    }
+  ]
+}
