@@ -24,7 +24,7 @@ RUN --mount=type=cache,id=pip-cache,target=/home/nonroot/.cache/pip,uid=65532,gi
 FROM builder AS test
 
 COPY requirements-dev.txt .
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=cache,id=pip-cache,target=/home/nonroot/.cache/pip,uid=65532,gid=65532,sharing=locked \
     /usr/bin/pip --python /app/venv/bin/python install -r requirements-dev.txt
 
 COPY pytest.ini app.py test_app.py ./

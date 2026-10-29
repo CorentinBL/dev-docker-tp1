@@ -81,6 +81,20 @@ jobs:
             pkg_token=${{ secrets.PKG_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Runtime guardrails (non-root, no shell, no pip)
+        run: |
+          user=$(docker inspect --format '{{.Config.User}}' "$CI_IMAGE")
+          echo "Image user: '${user}'"
+          case "$user" in
+            ""|0|0:*|root|root:*) echo "::error::the image runs as root"; exit 1 ;;
+          esac
+          if docker run --rm --entrypoint /bin/sh "$CI_IMAGE" -c true 2>/dev/null; then
+            echo "::error::a shell is present in the runtime image"; exit 1
+          fi
+          docker run --rm --entrypoint python "$CI_IMAGE" -c \
+            "import importlib.util, sys; sys.exit(importlib.util.find_spec('pip') is not None)" \
+            || { echo "::error::pip is present in the runtime image"; exit 1; }
+          echo "OK: non-root, no shell, no pip"
       - name: Dive (CI mode, lowest efficiency 80 %)
         run: |
           docker run --rm -e CI=true \
@@ -132,7 +146,7 @@ jobs:
   # 5. Dynamic integration: compose up, wait healthy, smoke tests, pytest, teardown
   integration:
     name: Integration & smoke tests
-    needs: [ build ]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,6 +173,13 @@ jobs:
           chmod 600 secrets/pkg_token.txt
       - name: Start stack and wait until both services are healthy
         run: docker compose up -d --no-build --wait --wait-timeout 120
+      - name: Smoke test /health
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 2 "http://127.0.0.1:${API_PORT}/health"
+      - name: Smoke test /dbtest
+        run: |
+          body=$(curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/dbtest")
+          echo "$body"
+          echo "$body" | grep -q '"db_connection":"successful"'
       - name: Pytest (unit + integration, inside the backend network)
         run: docker compose --profile test run --rm --build tests
       - name: Logs on failure
