@@ -172,6 +172,7 @@ jobs:
           printf '%s' "$PKG_TOKEN" > secrets/pkg_token.txt
           chmod 600 secrets/pkg_token.txt
       - name: Start stack and wait until both services are healthy
+        run: docker compose up -d --no-build --wait --wait-timeout 120
       - name: Smoke test /health
         run: curl --fail --silent --show-error --retry 5 --retry-delay 2 "http://127.0.0.1:${API_PORT}/health"
       - name: Smoke test /dbtest
@@ -179,7 +180,6 @@ jobs:
           body=$(curl --fail --silent --show-error "http://127.0.0.1:${API_PORT}/dbtest")
           echo "$body"
           echo "$body" | grep -q '"db_connection":"successful"'
-        run: docker compose up -d --no-build --wait --wait-timeout 120
       - name: Pytest (unit + integration, inside the backend network)
         run: docker compose --profile test run --rm --build tests
       - name: Logs on failure
